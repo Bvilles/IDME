@@ -1,13 +1,13 @@
-;; Decentralized Identity Management Contract
-;; Allows users to create and manage self-sovereign identities
+;; IDME Decentralized Identity Management Contract
+;; Self-sovereign identity solution on Stacks blockchain
 
 (define-constant contract-owner tx-sender)
 (define-constant err-unauthorized (err u100))
 (define-constant err-identity-exists (err u101))
 (define-constant err-identity-not-found (err u102))
 (define-constant err-invalid-credential (err u103))
+(define-constant err-max-credentials (err u104))
 
-;; Data maps
 ;; Store identity information
 (define-map identities 
   principal 
@@ -18,7 +18,7 @@
   }
 )
 
-;; Map to track credential validity
+;; Track credential validity
 (define-map credential-registry 
   (string-ascii 100) 
   bool
@@ -27,9 +27,9 @@
 ;; Create a new decentralized identity
 (define-public (create-identity (did (string-ascii 100)))
   (begin
-    ;; Check if identity already exists
+    ;; Prevent duplicate identities
     (asserts! (is-none (map-get? identities tx-sender)) err-identity-exists)
-
+    
     ;; Create identity
     (map-set identities 
       tx-sender 
@@ -39,7 +39,7 @@
         credentials: (list)
       }
     )
-
+    
     (ok true)
   )
 )
@@ -47,7 +47,6 @@
 ;; Add a credential to an identity
 (define-public (add-credential 
   (credential (string-ascii 100))
-  (issuer principal)
 )
   (let 
     (
@@ -57,26 +56,30 @@
           err-identity-not-found
         )
       )
-      (updated-credentials 
-        (unwrap! 
-          (as-max-len? 
-            (append (get credentials current-identity) credential) 
-            u10
-          ) 
-          (err u104)
-        )
-      )
+      (current-credentials (get credentials current-identity))
     )
-
+    ;; Check if we can add more credentials
+    (asserts! 
+      (< (len current-credentials) u10) 
+      err-max-credentials
+    )
+    
     ;; Update identity with new credential
     (map-set identities 
       tx-sender 
-      (merge current-identity { credentials: updated-credentials })
+      (merge current-identity { 
+        credentials: (unwrap-panic 
+          (as-max-len? 
+            (append current-credentials credential) 
+            u10
+          )
+        )
+      })
     )
-
+    
     ;; Register credential
     (map-set credential-registry credential true)
-
+    
     (ok true)
   )
 )
@@ -91,33 +94,26 @@
   (map-get? identities user)
 )
 
-;; Remove a specific credential
-(define-public (remove-credential (credential (string-ascii 100)))
-  (let 
-    (
-      (current-identity 
-        (unwrap! 
-          (map-get? identities tx-sender) 
-          err-identity-not-found
+;; Transfer identity ownership (optional feature)
+(define-public (transfer-identity (new-owner principal))
+  (match (map-get? identities tx-sender)
+    current-identity 
+      (begin
+        ;; Ensure new owner doesn't already have an identity
+        (asserts! (is-none (map-get? identities new-owner)) err-identity-exists)
+        
+        ;; Remove old identity
+        (map-delete identities tx-sender)
+        
+        ;; Create new identity for new owner
+        (map-set identities 
+          new-owner 
+          current-identity
         )
+        
+        (ok true)
       )
-      (updated-credentials 
-        (filter 
-          (lambda (cred) (not (is-eq cred credential))) 
-          (get credentials current-identity)
-        )
-      )
-    )
-
-    ;; Update identity without the removed credential
-    (map-set identities 
-      tx-sender 
-      (merge current-identity { credentials: updated-credentials })
-    )
-
-    ;; Remove credential from registry
-    (map-delete credential-registry credential)
-
-    (ok true)
+    ;; If no identity found, return an error
+    err-identity-not-found
   )
 )
