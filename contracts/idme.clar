@@ -7,6 +7,9 @@
 (define-constant err-identity-not-found (err u102))
 (define-constant err-invalid-credential (err u103))
 (define-constant err-max-credentials (err u104))
+(define-constant err-empty-did (err u105))
+(define-constant err-empty-credential (err u106))
+(define-constant err-credential-exists (err u107))
 
 ;; Store identity information
 (define-map identities 
@@ -27,6 +30,9 @@
 ;; Create a new decentralized identity
 (define-public (create-identity (did (string-ascii 100)))
   (begin
+    ;; Prevent empty DID
+    (asserts! (> (len did) u0) err-empty-did)
+    
     ;; Prevent duplicate identities
     (asserts! (is-none (map-get? identities tx-sender)) err-identity-exists)
     
@@ -58,6 +64,12 @@
       )
       (current-credentials (get credentials current-identity))
     )
+    ;; Check if credential is not empty
+    (asserts! (> (len credential) u0) err-empty-credential)
+    
+    ;; Check if credential already exists
+    (asserts! (is-none (map-get? credential-registry credential)) err-credential-exists)
+    
     ;; Check if we can add more credentials
     (asserts! 
       (< (len current-credentials) u10) 
